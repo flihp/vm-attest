@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use dice_verifier::Nonce;
 use log::debug;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -20,8 +19,10 @@ use crate::{
 };
 
 /// This type wraps the client side of a `UnixStream` socket.
-/// The service side should be an instance of the `VmInstanceRotSocketServer`
-/// type.
+/// The server side should be an instance of the `VmInstanceRotSocketServer`
+/// type. Clients should give instances of this type a unix socket connected
+/// to the VmInstanceRotSocketServer and then interact with it through the
+/// `VmInstanceRoT` trait.
 #[derive(Debug)]
 pub struct VmInstanceRotSocketClient {
     socket: RefCell<UnixStream>,
@@ -81,9 +82,9 @@ impl VmInstanceRot for VmInstanceRotSocketClient {
     }
 }
 
-/// This type raps a UnixListener accepting JSON encoded messages /
+/// This type wraps a UnixListener accepting JSON encoded messages /
 /// `QualifyingData` from the `VmInstanceRotSocketClient`. The `QualifyingData`
-/// is passed to an instance of the `VmInstanceRotMock`.
+/// is then passed to an instance of the `VmInstanceRotMock`.
 pub struct VmInstanceRotSocketServer {
     mock: VmInstanceRotMock,
     listener: UnixListener,
@@ -147,6 +148,8 @@ impl VmInstanceRotSocketServer {
 
                 debug!("qualifying data received: {qualifying_data:?}");
 
+                // NOTE: We do not contribute to the `QualifyingData` here. The
+                // self.mock impl will handle this for us.
                 let response = match self.mock.attest(&qualifying_data) {
                     Ok(a) => Response::Success(a),
                     Err(e) => Response::Error(e.to_string()),
@@ -176,7 +179,7 @@ pub enum VmResponse {
 /// Possible errors from `VmInstanceAttestSocketServer::run`
 #[derive(Debug, thiserror::Error)]
 pub enum VmInstanceTcpServerError<T: VmInstanceRot> {
-    #[error("failed to deserialize Nonce request from JSON")]
+    #[error("failed to deserialize QualifyingData request from JSON")]
     Request(serde_json::Error),
 
     #[error("failed to serialize Response to JSON")]
@@ -189,12 +192,13 @@ pub enum VmInstanceTcpServerError<T: VmInstanceRot> {
     VmInstanceRotError(<T as VmInstanceRot>::Error),
 }
 
-/// This type wraps a TcpListener accepting JSON encoded `Nonce`s from a
-/// challenger / `VmInstanceTcpClient`. It is intended to be run within a
-/// (mock) vm instance. For each challenge / `Nonce` received this type will
-/// generate some data (local to the VM) and hash the two together. This
-/// `QualifyingData` is then sent down to the `VmInstanceRot` by way of the
+/// This type wraps a TcpListener accepting JSON encoded `QualifyingData` from
+/// a challenger / `VmInstanceTcpClient`. It is intended to be run within a
+/// (mock) vm instance. For each challenge / `QualifyingData` received this
+/// type will generate some data (local to the VM) and hash the two together.
+/// This `QualifyingData` is then sent down to the `VmInstanceRot` by way of the
 /// `vm_instance_rot` member.
+#[derive(Debug)]
 pub struct VmInstanceTcpServer<T: VmInstanceRot> {
     challenge_listener: TcpListener,
     vm_instance_rot: T,
@@ -217,17 +221,17 @@ impl<T: VmInstanceRot> VmInstanceTcpServer<T> {
             loop {
                 let mut reader = BufReader::new(&mut client);
 
-                //   - read nonce from stream (JSON)
+                // read QualifyingData from stream (JSON)
                 let count = reader.read_line(&mut msg)?;
                 if count == 0 {
                     debug!("read 0 bytes: EOF");
                     break;
                 }
 
-                debug!("nonce received: {msg}");
-                let result: Result<Nonce, serde_json::Error> =
+                debug!("qualifying data received: {msg}");
+                let result: Result<QualifyingData, serde_json::Error> =
                     serde_json::from_str(&msg);
-                let nonce = match result {
+                let qdata_in = match result {
                     Ok(q) => q,
                     Err(e) => {
                         let response = VmResponse::Error(e.to_string());
@@ -238,23 +242,25 @@ impl<T: VmInstanceRot> VmInstanceTcpServer<T> {
                         return Err(VmInstanceTcpServerError::Request(e));
                     }
                 };
-                debug!("nonce decoded: {nonce:?}");
+                debug!("qualifying data decoded: {qdata_in:?}");
 
                 //   - generate `public_key`
                 let user_data = vec![1, 2, 3, 4];
 
-                //   - generate `qualifying_data`
-                let mut qualifying_data = Sha256::new();
-                qualifying_data.update(nonce);
-                qualifying_data.update(&user_data);
-                let qualifying_data = QualifyingData::from(
-                    Into::<[u8; 32]>::into(qualifying_data.finalize()),
-                );
+                // `QualifyingData` passed down to the next layer is the
+                // qualifying data from the caller combined with the data
+                // we've generated locally
+                let mut qdata_out = Sha256::new();
+                qdata_out.update(qdata_in);
+                qdata_out.update(&user_data);
+                let qdata_out = QualifyingData::from(Into::<[u8; 32]>::into(
+                    qdata_out.finalize(),
+                ));
 
-                //   - get `attestation` from `VmInstanceRot` by passing
-                //     `qualifying_data` to VmInstanceRot through
+                // get `attestation` from `VmInstanceRot` by passing the
+                // qualifying data generated above
                 let platform_attestation =
-                    match self.vm_instance_rot.attest(&qualifying_data) {
+                    match self.vm_instance_rot.attest(&qdata_out) {
                         Ok(a) => a,
                         Err(e) => {
                             let response = VmResponse::Error(e.to_string());
@@ -320,19 +326,16 @@ impl VmInstanceTcp {
         Self { stream }
     }
 
-    /// Send a nonce to the `VmInstanceTcpServer`, get back an `AttestedKey`
-    /// that we deserialize from JSON.
+    /// Send a nonce / `QualifyingData` to the `VmInstanceTcpServer`, get back
+    /// an `AttestedKey` that we deserialize from JSON.
     pub fn attest_key(
         &mut self,
-        nonce: &Nonce,
+        qdata: &QualifyingData,
     ) -> Result<AttestedKey, VmInstanceTcpError> {
-        debug!("generated nonce: {nonce:?}");
-        let mut nonce = match nonce {
-            Nonce::N32(a) => serde_json::to_string(&a)?,
-        };
-        nonce.push('\n');
-        self.stream.write_all(nonce.as_bytes())?;
-        debug!("nonce sent to vm instance");
+        let mut qdata = serde_json::to_string(&qdata)?;
+        qdata.push('\n');
+        self.stream.write_all(qdata.as_bytes())?;
+        debug!("qualifying data sent: {qdata}");
 
         // get back struct w/ attestation + public key
         let mut reader = BufReader::new(&self.stream);
