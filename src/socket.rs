@@ -22,8 +22,10 @@ use crate::{
 const MAX_LINE_LENGTH: usize = 1024;
 
 /// This type wraps the client side of a `UnixStream` socket.
-/// The service side should be an instance of the `VmInstanceRotSocketServer`
-/// type.
+/// The server side should be an instance of the `VmInstanceRotSocketServer`
+/// type. Clients should give instances of this type a unix socket connected
+/// to the VmInstanceRotSocketServer and then interact with it through the
+/// `VmInstanceRoT` trait.
 #[derive(Debug)]
 pub struct VmInstanceRotSocketClient {
     socket: RefCell<UnixStream>,
@@ -83,9 +85,9 @@ impl VmInstanceRot for VmInstanceRotSocketClient {
     }
 }
 
-/// This type raps a UnixListener accepting JSON encoded messages /
+/// This type wraps a UnixListener accepting JSON encoded messages /
 /// `QualifyingData` from the `VmInstanceRotSocketClient`. The `QualifyingData`
-/// is passed to an instance of the `VmInstanceRotMock`.
+/// is then passed to an instance of the `VmInstanceRotMock`.
 pub struct VmInstanceRotSocketServer {
     mock: VmInstanceRotMock,
     listener: UnixListener,
@@ -170,6 +172,8 @@ impl VmInstanceRotSocketServer {
 
                 debug!("qualifying data received: {qualifying_data:?}");
 
+                // NOTE: We do not contribute to the `QualifyingData` here. The
+                // self.mock impl will handle this for us.
                 let response = match self.mock.attest(&qualifying_data) {
                     Ok(a) => Response::Success(a),
                     Err(e) => Response::Error(e.to_string()),
