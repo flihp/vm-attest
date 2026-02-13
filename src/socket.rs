@@ -195,7 +195,7 @@ impl VmInstanceRotSocketServer {
 /// This enumeration represents the response message sent from one of the
 /// `VmInstanceTcpServer`
 #[derive(Debug, Deserialize, Serialize)]
-pub enum VmResponse {
+pub enum VmInstanceAttestationResponse {
     Success(AttestedData),
     Error(String),
 }
@@ -275,7 +275,8 @@ impl<T: VmInstanceRot> VmInstanceTcpServer<T> {
                 let qdata_in = match result {
                     Ok(q) => q,
                     Err(e) => {
-                        let response = VmResponse::Error(e.to_string());
+                        let response =
+                            VmInstanceAttestationResponse::Error(e.to_string());
                         let mut response = serde_json::to_string(&response)?;
                         response.push('\n');
                         debug!("sending error response: {response}");
@@ -307,7 +308,8 @@ impl<T: VmInstanceRot> VmInstanceTcpServer<T> {
                 {
                     Ok(a) => a,
                     Err(e) => {
-                        let response = VmResponse::Error(e.to_string());
+                        let response =
+                            VmInstanceAttestationResponse::Error(e.to_string());
                         let mut response = serde_json::to_string(&response)?;
                         response.push('\n');
                         debug!("sending error response: {response}");
@@ -323,7 +325,8 @@ impl<T: VmInstanceRot> VmInstanceTcpServer<T> {
 
                 let attested_key = AttestedData { attestation, data };
 
-                let response = VmResponse::Success(attested_key);
+                let response =
+                    VmInstanceAttestationResponse::Success(attested_key);
 
                 //   - return `attestation` + `public_key`
                 let mut response = serde_json::to_string(&response)?;
@@ -386,10 +389,13 @@ impl VmInstanceTcp {
         reader.read_line(&mut response)?;
         debug!("got attesetd key: {response}");
 
-        let response: VmResponse = serde_json::from_str(&response)?;
+        let response: VmInstanceAttestationResponse =
+            serde_json::from_str(&response)?;
         match response {
-            VmResponse::Success(a) => Ok(a),
-            VmResponse::Error(e) => Err(VmInstanceTcpError::VmInstance(e)),
+            VmInstanceAttestationResponse::Success(a) => Ok(a),
+            VmInstanceAttestationResponse::Error(e) => {
+                Err(VmInstanceTcpError::VmInstance(e))
+            }
         }
     }
 }
