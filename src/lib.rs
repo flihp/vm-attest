@@ -58,7 +58,7 @@ pub struct MeasurementLog {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct PlatformAttestation {
+pub struct VmInstanceAttestation {
     // the attestation from the Oxide Platform RoT
     // the message signed by RoT is:
     //   attestation = sign(hubpack(log) | qualifying_data)
@@ -86,7 +86,7 @@ pub struct PlatformAttestation {
 /// `VmInstanceRot` in response to the `attest` function / message.
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Response {
-    Success(PlatformAttestation),
+    Success(VmInstanceAttestation),
     Error(String),
 }
 
@@ -100,5 +100,5 @@ pub trait VmInstanceRot {
     fn attest(
         &self,
         qualifying_data: &QualifyingData,
-    ) -> Result<PlatformAttestation, Self::Error>;
+    ) -> Result<VmInstanceAttestation, Self::Error>;
 }

@@ -14,7 +14,7 @@ use std::{
 };
 
 use crate::{
-    PlatformAttestation, QualifyingData, Response, VmInstanceRot,
+    QualifyingData, Response, VmInstanceAttestation, VmInstanceRot,
     mock::{VmInstanceRotMock, VmInstanceRotMockError},
 };
 
@@ -61,7 +61,7 @@ impl VmInstanceRot for VmInstanceRotSocketClient {
     fn attest(
         &self,
         qualifying_data: &QualifyingData,
-    ) -> Result<PlatformAttestation, Self::Error> {
+    ) -> Result<VmInstanceAttestation, Self::Error> {
         let mut command = serde_json::to_string(&qualifying_data)?;
         command.push('\n');
         let command = command;
@@ -196,7 +196,7 @@ impl VmInstanceRotSocketServer {
 /// `VmInstanceTcpServer`
 #[derive(Debug, Deserialize, Serialize)]
 pub enum VmResponse {
-    Success(AttestedKey),
+    Success(AttestedData),
     Error(String),
 }
 
@@ -289,43 +289,39 @@ impl<T: VmInstanceRot> VmInstanceTcpServer<T> {
                 debug!("qualifying data decoded: {qdata_in:?}");
 
                 //   - generate `public_key`
-                let user_data = vec![1, 2, 3, 4];
+                let data = vec![1, 2, 3, 4];
 
                 // `QualifyingData` passed down to the next layer is the
                 // qualifying data from the caller combined with the data
                 // we've generated locally
                 let mut qdata_out = Sha256::new();
                 qdata_out.update(qdata_in);
-                qdata_out.update(&user_data);
+                qdata_out.update(&data);
                 let qdata_out = QualifyingData::from(Into::<[u8; 32]>::into(
                     qdata_out.finalize(),
                 ));
 
                 // get `attestation` from `VmInstanceRot` by passing the
                 // qualifying data generated above
-                let platform_attestation =
-                    match self.vm_instance_rot.attest(&qdata_out) {
-                        Ok(a) => a,
-                        Err(e) => {
-                            let response = VmResponse::Error(e.to_string());
-                            let mut response =
-                                serde_json::to_string(&response)?;
-                            response.push('\n');
-                            debug!("sending error response: {response}");
-                            reader
-                                .get_mut()
-                                .get_mut()
-                                .write_all(response.as_bytes())?;
-                            return Err(
-                                VmInstanceTcpServerError::VmInstanceRotError(e),
-                            );
-                        }
-                    };
-
-                let attested_key = AttestedKey {
-                    attestation: platform_attestation,
-                    public_key: user_data,
+                let attestation = match self.vm_instance_rot.attest(&qdata_out)
+                {
+                    Ok(a) => a,
+                    Err(e) => {
+                        let response = VmResponse::Error(e.to_string());
+                        let mut response = serde_json::to_string(&response)?;
+                        response.push('\n');
+                        debug!("sending error response: {response}");
+                        reader
+                            .get_mut()
+                            .get_mut()
+                            .write_all(response.as_bytes())?;
+                        return Err(
+                            VmInstanceTcpServerError::VmInstanceRotError(e),
+                        );
+                    }
                 };
+
+                let attested_key = AttestedData { attestation, data };
 
                 let response = VmResponse::Success(attested_key);
 
@@ -344,9 +340,9 @@ impl<T: VmInstanceRot> VmInstanceTcpServer<T> {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct AttestedKey {
-    pub attestation: PlatformAttestation,
-    pub public_key: Vec<u8>,
+pub struct AttestedData {
+    pub attestation: VmInstanceAttestation,
+    pub data: Vec<u8>,
 }
 
 /// Possible errors from `VmInstanceAttestSocketServer::run`
@@ -374,11 +370,11 @@ impl VmInstanceTcp {
     }
 
     /// Send a nonce / `QualifyingData` to the `VmInstanceTcpServer`, get back
-    /// an `AttestedKey` that we deserialize from JSON.
-    pub fn attest_key(
+    /// an `AttestedData` that we deserialize from JSON.
+    pub fn attest_data(
         &mut self,
         qdata: &QualifyingData,
-    ) -> Result<AttestedKey, VmInstanceTcpError> {
+    ) -> Result<AttestedData, VmInstanceTcpError> {
         let mut qdata = serde_json::to_string(&qdata)?;
         qdata.push('\n');
         self.stream.write_all(qdata.as_bytes())?;

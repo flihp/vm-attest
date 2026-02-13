@@ -11,7 +11,7 @@ use std::{
 use vsock::{VsockListener, VsockStream};
 
 use crate::{
-    PlatformAttestation, QualifyingData, Response, VmInstanceRot,
+    QualifyingData, Response, VmInstanceAttestation, VmInstanceRot,
     mock::{VmInstanceRotMock, VmInstanceRotMockError},
 };
 
@@ -154,7 +154,7 @@ impl VmInstanceRot for VmInstanceRotVsockClient {
     fn attest(
         &self,
         qualifying_data: &QualifyingData,
-    ) -> Result<PlatformAttestation, Self::Error> {
+    ) -> Result<VmInstanceAttestation, Self::Error> {
         let mut command = serde_json::to_string(&qualifying_data)?;
         command.push('\n');
         let command = command;

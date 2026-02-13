@@ -12,7 +12,7 @@ use log::{debug, info};
 use sha2::{Digest, Sha256};
 use std::{fs, net::TcpStream, os::unix::net::UnixStream, path::PathBuf};
 use vm_attest_trait::{
-    PlatformAttestation, QualifyingData, RotType, VmInstanceRot,
+    QualifyingData, RotType, VmInstanceAttestation, VmInstanceRot,
     mock::VmInstanceConf,
     socket::{VmInstanceRotSocketClient, VmInstanceTcp},
     vsock::VmInstanceRotVsockClient,
@@ -99,7 +99,7 @@ struct Args {
 }
 
 fn appraise_platform_attestation(
-    attestation: &PlatformAttestation,
+    attestation: &VmInstanceAttestation,
     qualifying_data: &QualifyingData,
     root_certs: Option<&[Certificate]>,
     rims: &ReferenceMeasurements,
@@ -320,13 +320,14 @@ fn main() -> Result<()> {
             let mut vm_instance = VmInstanceTcp::new(stream);
             // send Nonce to server
             let nonce = QualifyingData::from_platform_rng()?;
-            let attested_key =
-                vm_instance.attest_key(&nonce).context("get attested key")?;
+            let attested_key = vm_instance
+                .attest_data(&nonce)
+                .context("get attested data")?;
 
             // reconstruct the qualifying data created by the vm instance
             let mut qualifying_data = Sha256::new();
             qualifying_data.update(nonce);
-            qualifying_data.update(&attested_key.public_key);
+            qualifying_data.update(&attested_key.data);
             let vm_qualifying_data = QualifyingData::from(
                 Into::<[u8; 32]>::into(qualifying_data.finalize()),
             );
@@ -340,7 +341,7 @@ fn main() -> Result<()> {
                 &instance_rim,
             )
             .context("appraise platform attestation")?;
-            info!("attested public key: {:?}", attested_key.public_key);
+            info!("attested data: {:?}", attested_key.data);
 
             // do something with the public key
         }
