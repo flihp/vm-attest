@@ -34,27 +34,32 @@ if [ $# -ne 2 ]; then
 fi
 
 MACADDR="$2"
-
 # assumes pwd is `vm-attest-proto` src dir
-cargo build --bin vm-instance
+cargo build
 
-VM_INSTANCE_BIN=target/debug/vm-instance
-if [ ! -e "$VM_INSTANCE_BIN" ]; then
-    >&2 echo "missing required file: $VM_INSTANCE_BIN"
-    exit 1
-fi
+BINS="target/debug/vm-instance target/debug/appraiser"
+for BIN in $BINS; do
+    if [ ! -e "$BIN" ]; then
+        >&2 echo "missing required file: $BIN"
+        exit 1
+    fi
+done
 
-qemu-img create -f qcow2 "$QCOW_FILE" 10G
+OUTDIR=$(cargo outdir | awk '{ print $2 }')
+
+qemu-img create -f qcow2 "$QCOW_FILE" 2G
 
 sudo modprobe nbd
 
 # TODO: dynamically assign `nbd`
+# TODO: block size must match value used when uploading the image to the rack
+# in `vm-attest_cli`
 sudo qemu-nbd -c /dev/nbd0 "$QCOW_FILE"
 
 sudo parted -s -a optimal -- /dev/nbd0 \
   mklabel gpt \
-  mkpart primary fat32 1MiB 256MiB \
-  mkpart primary ext4 256MiB -0 \
+  mkpart primary fat32 1MiB 128MiB \
+  mkpart primary ext4 128MiB -0 \
   name 1 uefi \
   name 2 root \
   set 1 esp on
@@ -165,7 +170,7 @@ Description=A simple daemon service
 After=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/vm-instance --retry --address "0.0.0.0:6666" vsock
+ExecStart=/usr/local/bin/vm-instance --verbose --retry --address "0.0.0.0:6666" vsock 3000
 Restart=always
 Type=simple
 
@@ -175,16 +180,33 @@ EOF
 
 systemctl enable vm-instance.service
 
+# TODO/:
+# setup overlayfs for the rootfs, easier than setting up overlayfs mounts
+# for each place we need to be RW
+#DEBIAN_FRONTEND=noninteractive apt-get install --assume-yes overlayroot
+#cat <<EOF > /etc/overlayroot.conf
+#overlayroot=/dev/vda2
+#EOF
+
+# TODO:
 # no fancy tmpfs / overlayfs stuff, just read-only rootfs
 # this produces a few errors on boot but none are fatal
 cat <<EOF > /etc/fstab
-$ROOT_UUID / ext4 defaults,ro 0 1
+$ROOT_UUID / ext4 defaults 0 1
 $EFI_UUID /boot/efi vfat defaults 0 1
 EOF
 
 EOS
 
-sudo cp "$VM_INSTANCE_BIN" "$BOOTSTRAP_ROOT"/usr/local/bin
+for BIN in $BINS; do
+    sudo cp "$BIN" "$BOOTSTRAP_ROOT"/usr/local/bin
+done
+
+# attest-mock reference-measurements.kdl corim > corim.cbor
+DATAS="rot-v1.0.38.corim.cbor sp-v1.0.58.corim.cbor staging-root-a.cert.pem vm-instance-cfg.json"
+for DATA in $DATAS; do
+    sudo cp "$DATA" "$BOOTSTRAP_ROOT"/root
+done
 
 MNTS="dev proc sys"
 for MNT in $MNTS; do
