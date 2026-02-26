@@ -6,16 +6,14 @@ use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
 use clap_verbosity::{InfoLevel, Verbosity};
 
-use log::{debug, info};
-use std::{
-    net::TcpListener, os::unix::net::UnixStream, path::PathBuf, thread, time,
-};
-
-use vsock::{VMADDR_CID_HOST, VsockAddr, VsockStream};
+use log::debug;
+use std::{net::TcpListener, path::PathBuf};
+use vsock::{VMADDR_CID_HOST, VsockAddr};
 
 use vm_attest_trait::{
-    socket::{VmInstanceRotSocketClient, VmInstanceTcpServer},
-    vsock::VmInstanceRotVsockClient,
+    VmInstanceRotBuilder,
+    socket::{VmInstanceRotSocketClientBuilder, VmInstanceTcpServer},
+    vsock::VmInstanceRotVsockClientBuilder,
 };
 
 #[derive(Debug, Subcommand)]
@@ -68,10 +66,8 @@ fn main() -> Result<()> {
                 return Err(anyhow!("socket file missing"));
             }
 
-            let stream = UnixStream::connect(&sock)
-                .context("connect to domain socket")?;
-            debug!("connected to VmInstanceRotServer socket");
-            let vm_instance_rot = VmInstanceRotSocketClient::new(stream);
+            let builder = VmInstanceRotSocketClientBuilder::new(sock);
+            let vm_instance_rot = builder.build()?;
 
             let challenge_listener = TcpListener::bind(&args.address)
                 .context("bind to TCP socket")?;
@@ -85,28 +81,8 @@ fn main() -> Result<()> {
             debug!("connecting to host vsock on port: {port}");
             let addr = VsockAddr::new(VMADDR_CID_HOST, port);
 
-            // if `--retry` we repeatedly try to connect to the host vsock
-            let stream = loop {
-                let stream =
-                    VsockStream::connect(&addr).context("vsock stream connect");
-                match stream {
-                    Ok(stream) => break stream,
-                    // make this more specific by detecting whatever this is:
-                    // Connection reset by peer (os error 104)
-                    Err(e) => {
-                        if args.retry {
-                            info!("failed to connect to vsock stream: {e:?}");
-                            thread::sleep(time::Duration::from_secs(2));
-                            continue;
-                        } else {
-                            return Err(e);
-                        }
-                    }
-                }
-            };
-
-            debug!("creating VmInstanceRotVsockClient from VsockStream");
-            let vm_instance_rot = VmInstanceRotVsockClient::new(stream);
+            let builder = VmInstanceRotVsockClientBuilder::new(addr);
+            let vm_instance_rot = builder.build()?;
 
             debug!("binding to address: {}", &args.address);
             let challenge_listener = TcpListener::bind(&args.address)

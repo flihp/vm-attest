@@ -7,20 +7,49 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     cell::RefCell,
-    io::{BufRead, BufReader, Read, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     ops::DerefMut,
     os::unix::net::{UnixListener, UnixStream},
+    path::PathBuf,
 };
 
 use crate::{
     QualifyingData, VmInstanceAttestResponse, VmInstanceAttestation,
-    VmInstanceRot,
+    VmInstanceRot, VmInstanceRotBuilder,
     mock::{VmInstanceRotMock, VmInstanceRotMockError},
 };
 
 /// the maximum length of a message that we'll accept from clients
 const MAX_LINE_LENGTH: usize = 1024;
+
+#[derive(Debug, thiserror::Error)]
+pub enum VmInstanceRotSocketClientBuilderError {
+    #[error("error connecting to the unix stream socket")]
+    Connect(#[from] io::Error),
+}
+
+pub struct VmInstanceRotSocketClientBuilder {
+    sock: PathBuf,
+}
+
+impl VmInstanceRotSocketClientBuilder {
+    pub fn new(sock: PathBuf) -> Self {
+        Self { sock }
+    }
+}
+
+impl VmInstanceRotBuilder<VmInstanceRotSocketClient>
+    for VmInstanceRotSocketClientBuilder
+{
+    type Error = VmInstanceRotSocketClientBuilderError;
+
+    fn build(&self) -> Result<VmInstanceRotSocketClient, Self::Error> {
+        let stream = UnixStream::connect(&self.sock)?;
+
+        Ok(VmInstanceRotSocketClient::new(stream))
+    }
+}
 
 /// This type wraps the client side of a `UnixStream` socket.
 /// The server side should be an instance of the `VmInstanceRotSocketServer`
@@ -229,16 +258,16 @@ pub enum VmInstanceTcpServerError<T: VmInstanceRot> {
 /// This `QualifyingData` is then sent down to the `VmInstanceRot` by way of the
 /// `vm_instance_rot` member.
 #[derive(Debug)]
-pub struct VmInstanceTcpServer<T: VmInstanceRot> {
+pub struct VmInstanceTcpServer<T: VmInstanceRotBuilder<T>> {
     challenge_listener: TcpListener,
-    vm_instance_rot: T,
+    vm_instance_rot_builder: T,
 }
 
-impl<T: VmInstanceRot> VmInstanceTcpServer<T> {
-    pub fn new(challenge_listener: TcpListener, vm_instance_rot: T) -> Self {
+impl<T: VmInstanceRotBuilder<T>> VmInstanceTcpServer<T> {
+    pub fn new(challenge_listener: TcpListener, vm_instance_rot_builder: T) -> Self {
         Self {
             challenge_listener,
-            vm_instance_rot,
+            vm_instance_rot_builder,
         }
     }
 
@@ -311,8 +340,8 @@ impl<T: VmInstanceRot> VmInstanceTcpServer<T> {
 
                 // get `attestation` from `VmInstanceRot` by passing the
                 // qualifying data generated above
-                let attestation = match self.vm_instance_rot.attest(&qdata_out)
-                {
+                let rot = self.vm_instance_rot_builder.build()?;
+                let attestation = match rot.attest(&qdata_out) {
                     Ok(a) => a,
                     Err(e) => {
                         let response =

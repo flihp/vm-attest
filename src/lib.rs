@@ -133,3 +133,9 @@ pub trait VmInstanceRot {
         qualifying_data: &QualifyingData,
     ) -> Result<VmInstanceAttestation, Self::Error>;
 }
+
+pub trait VmInstanceRotBuilder<T: VmInstanceRot> {
+    type Error;
+
+    fn build(&self) -> Result<T, Self::Error>;
+}

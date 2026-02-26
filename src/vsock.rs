@@ -5,19 +5,46 @@
 use log::{debug, warn};
 use std::{
     cell::RefCell,
-    io::{BufRead, BufReader, Read, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     ops::DerefMut,
 };
-use vsock::{VsockListener, VsockStream};
+use vsock::{VsockAddr, VsockListener, VsockStream};
 
 use crate::{
     QualifyingData, VmInstanceAttestResponse, VmInstanceAttestation,
-    VmInstanceRot,
+    VmInstanceRot, VmInstanceRotBuilder,
     mock::{VmInstanceRotMock, VmInstanceRotMockError},
 };
 
 /// the maximum length of a message that we'll accept from clients
 const MAX_LINE_LENGTH: usize = 1024;
+
+#[derive(Debug, thiserror::Error)]
+pub enum VmInstanceRotVsockClientBuilderError {
+    #[error("error connecting to the unix stream socket")]
+    Connect(#[from] io::Error),
+}
+
+pub struct VmInstanceRotVsockClientBuilder {
+    addr: VsockAddr,
+}
+
+impl VmInstanceRotVsockClientBuilder {
+    pub fn new(addr: VsockAddr) -> Self {
+        Self { addr }
+    }
+}
+
+impl VmInstanceRotBuilder<VmInstanceRotVsockClient>
+    for VmInstanceRotVsockClientBuilder
+{
+    type Error = VmInstanceRotVsockClientBuilderError;
+
+    fn build(&self) -> Result<VmInstanceRotVsockClient, Self::Error> {
+        let stream = VsockStream::connect(&self.addr)?;
+        Ok(VmInstanceRotVsockClient::new(stream))
+    }
+}
 
 /// This type is an implementation of a `VmInstanceRot` that listens for
 /// connections on a vsock. It receives JSON messages that encode the sole
