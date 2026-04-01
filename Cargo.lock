@@ -1505,8 +1505,6 @@ dependencies = [
  "getrandom 0.3.4",
  "hex",
  "hubpack",
- "libc",
- "log",
  "rats-corim",
  "serde",
  "serde_json",
