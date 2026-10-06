@@ -3,11 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use attest_data::AttestDataError as OxAttestDataError;
-use dice_verifier::{
+use hubpack::SerializedSize;
+use oxide_rot::{
     Attest as OxAttest, AttestError as OxAttestError,
     Attestation as OxAttestation, Log, Nonce,
 };
-use hubpack::SerializedSize;
 use sha2::{Digest, Sha256};
 use x509_cert::der::Encode;
 
@@ -41,7 +41,7 @@ pub struct VmInstanceRot {
 
 impl VmInstanceRot {
     /// Create an instance of the `VmInstanceRot` type. A `Box`ed type
-    /// implementing the dice_verifier::Attest is provided to the constructor.
+    /// implementing the oxide_rot::Attest is provided to the constructor.
     /// This type connects the `VmInstanceRot` to the oxide platform rot, or
     /// possibly a mock implementation thereof.
     pub fn new(oxattest_mock: Box<dyn OxAttest + Send + Sync>) -> Self {
@@ -119,7 +119,7 @@ impl VmInstanceRot {
 #[cfg(test)]
 mod test {
     use crate::*;
-    use dice_verifier::{
+    use oxide_rot::{
         AttestMock as OxAttestMock, Attestation as OxAttestation, Log, Nonce,
     };
     use sha2::{Digest, Sha256};
@@ -278,7 +278,7 @@ mod test {
             hubpack::deserialize(&plat_attest.attestation)
                 .expect("deserialize attestation");
 
-        let result = dice_verifier::verify_attestation(
+        let result = dice_verifier::oxide_rot::verify_attestation(
             &cert,
             &attestation,
             &log,
@@ -289,7 +289,9 @@ mod test {
 
     #[tokio::test]
     async fn appraise_log() {
-        use dice_verifier::{Corim, MeasurementSet, ReferenceMeasurements};
+        use dice_verifier::oxide_rot::{
+            Corim, MeasurementSet, ReferenceMeasurements,
+        };
 
         let (attest, instance_cfg) = setup();
         let qualifying_data = mock_qualifying_data();
@@ -331,7 +333,7 @@ mod test {
                         MeasurementSet::from_artifacts(&cert_chain_pem, &log)
                             .expect("MeasurementSet from PkiPath and Log");
 
-                    let result = dice_verifier::verify_measurements(
+                    let result = dice_verifier::oxide_rot::verify_measurements(
                         &measurements,
                         &rims,
                     );
